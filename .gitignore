@@ -1,0 +1,14 @@
+# Rust
+/target
+Cargo.lock
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# shush自身のvaultファイル（念のため）
+*.db
+*.sock
