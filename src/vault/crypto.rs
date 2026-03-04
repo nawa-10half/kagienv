@@ -14,36 +14,26 @@ use anyhow::{Context, Result};
 pub fn generate_identity(path: &Path) -> Result<Identity> {
     let identity = Identity::generate();
 
+    #[cfg(target_os = "macos")]
     if should_use_keychain() {
-        #[cfg(target_os = "macos")]
-        {
-            save_to_keychain(&identity)?;
-            save_public_key_only(path, &identity)?;
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            // Fallback — should not reach here because should_use_keychain()
-            // returns false on non-macOS, but handle it gracefully.
-            let password = prompt_password_confirm()?;
-            let encrypted = passphrase_encrypt_identity(&identity, &password)?;
-            fs::write(path, encrypted)
-                .with_context(|| format!("Failed to write identity to {}", path.display()))?;
-        }
-    } else {
-        let password = prompt_password_confirm()?;
-        let encrypted = passphrase_encrypt_identity(&identity, &password)?;
-        fs::write(path, encrypted)
-            .with_context(|| format!("Failed to write identity to {}", path.display()))?;
+        save_to_keychain(&identity)?;
+        save_public_key_only(path, &identity)?;
+        return Ok(identity);
     }
+
+    let password = prompt_password_confirm()?;
+    save_passphrase_encrypted(path, &identity, &password)?;
 
     Ok(identity)
 }
 
 /// Load an existing age x25519 identity from a file (or Keychain).
 pub fn load_identity(path: &Path) -> Result<Identity> {
-    match detect_identity_format(path)? {
+    let (format, raw) = detect_identity_format(path)?;
+    match format {
         IdentityFormat::Plaintext => {
-            let identity = load_plaintext_identity(path)?;
+            let text = String::from_utf8(raw).context("Identity file is not valid UTF-8")?;
+            let identity = parse_identity_key(&text)?;
             migrate_plaintext_identity(path, &identity)?;
             Ok(identity)
         }
@@ -61,7 +51,7 @@ pub fn load_identity(path: &Path) -> Result<Identity> {
         }
         IdentityFormat::PassphraseEncrypted => {
             let password = prompt_password("Master password: ")?;
-            passphrase_decrypt_identity(path, &password)
+            passphrase_decrypt_identity(&raw, &password)
         }
     }
 }
@@ -97,7 +87,7 @@ pub fn decrypt(ciphertext: &[u8], identity: &Identity) -> Result<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Identity format detection
+// Identity format detection & parsing
 // ---------------------------------------------------------------------------
 
 enum IdentityFormat {
@@ -109,23 +99,31 @@ enum IdentityFormat {
     PassphraseEncrypted,
 }
 
-fn detect_identity_format(path: &Path) -> Result<IdentityFormat> {
+fn detect_identity_format(path: &Path) -> Result<(IdentityFormat, Vec<u8>)> {
     let raw = fs::read(path)
         .with_context(|| format!("Failed to read identity file: {}", path.display()))?;
 
-    // Check for age encryption header (binary format).
     if raw.starts_with(b"age-encryption.org/v1") {
-        return Ok(IdentityFormat::PassphraseEncrypted);
+        return Ok((IdentityFormat::PassphraseEncrypted, raw));
     }
 
-    // It's a text file — inspect lines.
     let text = String::from_utf8_lossy(&raw);
     if text.lines().any(|l| l.starts_with("AGE-SECRET-KEY-")) {
-        return Ok(IdentityFormat::Plaintext);
+        return Ok((IdentityFormat::Plaintext, raw));
     }
 
-    // No secret key line → assume public-key-only (macOS Keychain mode).
-    Ok(IdentityFormat::PublicKeyOnly)
+    Ok((IdentityFormat::PublicKeyOnly, raw))
+}
+
+/// Parse an AGE-SECRET-KEY line from text and return the Identity.
+fn parse_identity_key(text: &str) -> Result<Identity> {
+    let key_line = text
+        .lines()
+        .find(|l| l.starts_with("AGE-SECRET-KEY-"))
+        .context("No AGE-SECRET-KEY line found")?;
+    key_line
+        .parse::<Identity>()
+        .map_err(|e| anyhow::anyhow!("Failed to parse identity: {}", e))
 }
 
 // ---------------------------------------------------------------------------
@@ -140,46 +138,29 @@ fn should_use_keychain() -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy plaintext helpers
+// Legacy plaintext migration
 // ---------------------------------------------------------------------------
-
-fn load_plaintext_identity(path: &Path) -> Result<Identity> {
-    let contents = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read identity from {}", path.display()))?;
-
-    let key_line = contents
-        .lines()
-        .find(|line| line.starts_with("AGE-SECRET-KEY-"))
-        .context("No AGE-SECRET-KEY line found in identity file")?;
-
-    key_line
-        .parse::<Identity>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse identity: {}", e))
-}
 
 /// Migrate a plaintext identity to the platform-appropriate protected format.
 fn migrate_plaintext_identity(path: &Path, identity: &Identity) -> Result<()> {
+    #[cfg(target_os = "macos")]
     if should_use_keychain() {
-        #[cfg(target_os = "macos")]
-        {
-            save_to_keychain(identity)?;
-            save_public_key_only(path, identity)?;
-            eprintln!("Migrated identity to macOS Keychain.");
-        }
-    } else {
-        eprintln!("Your identity key is stored in plain text.");
-        eprintln!("Setting up master password protection...");
-        let password = prompt_password_confirm()?;
-        let encrypted = passphrase_encrypt_identity(identity, &password)?;
-        fs::write(path, encrypted)
-            .with_context(|| format!("Failed to write encrypted identity to {}", path.display()))?;
-        eprintln!("Migrated identity to passphrase-encrypted format.");
+        save_to_keychain(identity)?;
+        save_public_key_only(path, identity)?;
+        eprintln!("Migrated identity to macOS Keychain.");
+        return Ok(());
     }
+
+    eprintln!("Your identity key is stored in plain text.");
+    eprintln!("Setting up master password protection...");
+    let password = prompt_password_confirm()?;
+    save_passphrase_encrypted(path, identity, &password)?;
+    eprintln!("Migrated identity to passphrase-encrypted format.");
     Ok(())
 }
 
 // ---------------------------------------------------------------------------
-// macOS Keychain helpers + Touch ID via LocalAuthentication
+// macOS Keychain helpers
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
@@ -208,14 +189,7 @@ fn load_from_keychain() -> Result<Identity> {
 
     let secret_str =
         String::from_utf8(secret_bytes).context("Keychain data is not valid UTF-8")?;
-    let key_line = secret_str
-        .lines()
-        .find(|l| l.starts_with("AGE-SECRET-KEY-"))
-        .context("Keychain data does not contain an AGE-SECRET-KEY line")?;
-
-    key_line
-        .parse::<Identity>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse identity from Keychain: {}", e))
+    parse_identity_key(&secret_str)
 }
 
 #[cfg(target_os = "macos")]
@@ -230,6 +204,13 @@ fn save_public_key_only(path: &Path, identity: &Identity) -> Result<()> {
 // ---------------------------------------------------------------------------
 // Passphrase encryption / decryption
 // ---------------------------------------------------------------------------
+
+fn save_passphrase_encrypted(path: &Path, identity: &Identity, password: &str) -> Result<()> {
+    let encrypted = passphrase_encrypt_identity(identity, password)?;
+    fs::write(path, encrypted)
+        .with_context(|| format!("Failed to write encrypted identity to {}", path.display()))?;
+    Ok(())
+}
 
 fn passphrase_encrypt_identity(identity: &Identity, password: &str) -> Result<Vec<u8>> {
     let secret_key_str = identity.to_string();
@@ -247,12 +228,9 @@ fn passphrase_encrypt_identity(identity: &Identity, password: &str) -> Result<Ve
     Ok(encrypted)
 }
 
-fn passphrase_decrypt_identity(path: &Path, password: &str) -> Result<Identity> {
-    let ciphertext = fs::read(path)
-        .with_context(|| format!("Failed to read encrypted identity from {}", path.display()))?;
-
+fn passphrase_decrypt_identity(ciphertext: &[u8], password: &str) -> Result<Identity> {
     let decryptor =
-        age::Decryptor::new(ciphertext.as_slice()).context("Failed to parse encrypted identity")?;
+        age::Decryptor::new(ciphertext).context("Failed to parse encrypted identity")?;
     let passphrase = SecretString::from(password.to_string());
     let scrypt_identity = age::scrypt::Identity::new(passphrase);
 
@@ -263,14 +241,7 @@ fn passphrase_decrypt_identity(path: &Path, password: &str) -> Result<Identity> 
     reader.read_to_end(&mut decrypted)?;
 
     let key_str = String::from_utf8(decrypted).context("Decrypted identity is not valid UTF-8")?;
-    let key_line = key_str
-        .lines()
-        .find(|l| l.starts_with("AGE-SECRET-KEY-"))
-        .context("Decrypted data does not contain an AGE-SECRET-KEY line")?;
-
-    key_line
-        .parse::<Identity>()
-        .map_err(|e| anyhow::anyhow!("Failed to parse decrypted identity: {}", e))
+    parse_identity_key(&key_str)
 }
 
 // ---------------------------------------------------------------------------
