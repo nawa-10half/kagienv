@@ -10,4 +10,8 @@ age = "0.11"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
+rpassword = "7"
 rusqlite = { version = "0.38", features = ["bundled"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"

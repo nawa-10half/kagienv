@@ -81,16 +81,21 @@ shush run aws sts get-caller-identity
 
 - **Encryption:** Each secret value is encrypted with [age](https://github.com/FiloSottile/age) (x25519) before storage
 - **Storage:** Encrypted values stored in SQLite (`~/.shush/vault.db`)
-- **Keys:** An age keypair is generated on first use at `~/.shush/keys/identity.txt`
+- **Key protection:**
+  - **macOS:** Private key stored in macOS Keychain; `identity.txt` contains only the public key
+  - **Linux/Windows:** Private key encrypted with a master password (age scrypt)
+  - Legacy plaintext keys are automatically migrated on first use
 - **Permissions:** Vault directory (700) and key file (600) are restricted to owner only
 - **Scan:** Compares actual vault values against your codebase — not pattern matching
 
 ```
 ~/.shush/              (700)
 ├── keys/
-│   └── identity.txt   (600) age x25519 private key
+│   └── identity.txt   (600) public key only (macOS) or encrypted private key (Linux/Windows)
 └── vault.db           SQLite with encrypted secret values
 ```
+
+Set `SHUSH_USE_PASSWORD=1` to force master-password mode on macOS (useful for testing).
 
 ## Scan & Git Hooks
 
@@ -115,7 +120,6 @@ MVP (v0.1) — core functionality is implemented and usable.
 
 ### Planned
 - Team sharing via public-key encryption (`shush share / receive`)
-- macOS Keychain / Touch ID integration
 - `.env` file import (`shush import .env`)
 - SQLCipher for database-level encryption
 
