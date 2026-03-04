@@ -1,0 +1,13 @@
+[package]
+name = "shush"
+version = "0.1.0"
+edition = "2024"
+description = "A local-first secret manager for developers"
+license = "MIT"
+
+[dependencies]
+age = "0.11"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+rusqlite = { version = "0.38", features = ["bundled"] }
