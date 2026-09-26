@@ -2,14 +2,16 @@
 
 These shared instructions apply to every coding agent working in this repository.
 
+If `docs/session-handoff.md` exists, it lists uncommitted work carried over from an earlier session; check it before committing, deleting, or restoring those files.
+
 ## Working Agreement
 
 - Preserve unrelated work in a dirty worktree. Do not reset, discard, or reformat files outside the requested change.
 - Keep changes focused and verify them in proportion to their risk. For documentation-only changes, check links, commands, and referenced paths. For code or configuration changes, run the relevant project checks.
-- Complete low-risk, documentation-only, and configuration-only changes in the parent session with proportional checks unless independent review is specifically warranted.
-- Use a fresh, independent verifier and reviewer for high-risk changes affecting application behavior, persisted credentials, authentication, privacy, analytics, advertising, deployment, purchases, or external systems. They must not validate their own implementation.
+- Implement and verify in the parent session by default: build, run the relevant tests, and exercise the affected flow. Trivial, documentation-only, and configuration-only changes need only proportional checks. Before committing a behavior-changing code change that spans multiple files, have a fresh reviewer check the diff.
+- Use a fresh, independent verifier and reviewer for high-risk changes affecting persisted credentials, authentication, privacy, analytics, advertising, deployment, purchases, or external systems. They must not validate their own implementation.
 - Only the orchestrating parent delegates workflow roles. Child implementers, verifiers, and reviewers return evidence to that parent without recursively spawning workflow agents. Use parallel agents only for genuinely independent work that materially improves speed or quality. Record any material limitation when a required check cannot run.
-- Escalate ambiguity, risky Google/Firebase/Play Console changes, or an unavailable required model or tool instead of silently substituting a weaker workflow.
+- Escalate ambiguity, risky changes, or an unavailable required model or tool instead of silently substituting a weaker workflow.
 
 ## Project Overview
 

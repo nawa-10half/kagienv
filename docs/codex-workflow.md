@@ -13,7 +13,7 @@ The role configuration pins the ordinary implementer to Luna. When escalating, e
 
 ## Handoffs and Scope
 
-Keep low-risk, documentation-only, and configuration-only work in the parent session unless independent review is specifically warranted.
+Implement and verify in the parent session by default; trivial, documentation-only, and configuration-only work needs only proportional checks. Before committing a behavior-changing code change that spans multiple files, use the code-reviewer role from the Routing section; high-risk changes also use the verifier role.
 
 When delegating, the parent assigns each worker a narrow file or behavior scope, explicit acceptance criteria, and the minimum context needed to work independently. Spawn specialist agents with `fork_turns: "none"` and a self-contained task packet; never omit `fork_turns`, because omission may copy the full parent history. Use a positive bounded turn count only when a small amount of recent conversational context is strictly necessary. Avoid full-history forks except for an exact continuation where their cost is justified.
 
